@@ -37,9 +37,9 @@ function setup_engine() {
 
     const mpv = options.findIndex(opt => opt[0] === "MultiPV");
     if(mpv !== -1)
-        options[mpv][1] = cpuCount;
+        options[mpv][1] = "4";
     else
-        options.unshift(["MultiPV", cpuCount]);
+        options.unshift(["MultiPV", "4"]);
 
     if (!options || !options.length)
         return Promise.resolve();
@@ -59,13 +59,33 @@ function setup_engine() {
 
 function process_one_move(move) {
     console.log("Analyzing " + move);
-    game.move(move);
     const fen = game.fen();
     return engine.position(fen)
         .then(() => engine.go({movetime: movetime}))
         .then((result) => {
-            game_result.push(result);
-            //console.log(result);
+            const multis = [];
+            result.info.forEach(currentMove => {
+                const mpv = parseInt(currentMove.multipv);
+                while(multis.length < mpv) multis.push({pv: "", score: 0, depth: 0, time: 0, nps: 0, multipv: mpv, nodes: 0});
+                multis[mpv - 1] = {
+                    pv: currentMove.pv,
+                    score: parseInt(currentMove.score.value),
+                    depth: parseInt(currentMove.depth),
+                    time: parseInt(currentMove.time),
+                    nps: parseInt(currentMove.nps),
+                    multipv: mpv,
+                    nodes: parseInt(currentMove.nodes)
+                };
+            });
+
+            const themove = game.move(move);
+            const alg = themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
+
+            game_result.push({
+                move: move,
+                alg: alg,
+                lines: multis
+            });
         });
 }
 
@@ -86,6 +106,7 @@ app.post('/', (req, res) => {
         post_data += chunk;
     });
     req.on('end', function () {
+        game.reset();
         const thepromise = status === "none" ? initialized : engine.ucinewgame();
         thepromise
             .then(() => process_game(JSON.parse(post_data)))
@@ -102,7 +123,7 @@ app.post('/', (req, res) => {
 });
 
 app.listen(process.env.PORT, () =>
-    console.log(`Example app listening on port ${process.env.PORT}!`),
+    console.log(`Stockfish client listening on port ${process.env.PORT}!`),
 );
 
 //["MultiPV","4"],["Debug Log File", "testdebug.log"],["Threads","4"],["Hash", "1024"]
