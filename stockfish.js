@@ -69,7 +69,7 @@ function process_one_move(move) {
                 while(multis.length < mpv) multis.push({pv: "", score: 0, depth: 0, time: 0, nps: 0, multipv: mpv, nodes: 0});
                 multis[mpv - 1] = {
                     pv: currentMove.pv,
-                    score: parseInt(currentMove.score.value),
+                    score: !!currentMove.score ? parseInt(currentMove.score.value) : "?",
                     depth: parseInt(currentMove.depth),
                     time: parseInt(currentMove.time),
                     nps: parseInt(currentMove.nps),
