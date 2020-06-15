@@ -79,7 +79,7 @@ function process_one_move(move) {
             });
 
             const themove = game.move(move);
-            const alg = themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
+            const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
 
             game_result.push({
                 move: move,
@@ -107,7 +107,14 @@ app.post('/', (req, res) => {
     });
     req.on('end', function () {
         game.reset();
-        const thepromise = status === "none" ? initialized : engine.ucinewgame();
+        let thepromise;
+        if(status === "none") {
+            thepromise = initialized;
+        } else {
+            thepromise = engine.isready()
+                .then(() => engine.ucinewgame())
+                .then(() => engine.isready());
+        }
         thepromise
             .then(() => process_game(JSON.parse(post_data)))
             .then(() => {
