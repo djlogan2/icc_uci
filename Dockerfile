@@ -9,10 +9,12 @@ RUN apt-get install --yes build-essential
 COPY stockfish.js .
 COPY package.json .
 COPY docker/stockfish_20011801_x64_modern .
+COPY docker/book.bin .
 RUN chmod +x stockfish_20011801_x64_modern
 RUN npm install
 EXPOSE 3010
 ENV ENGINE /stockfish_20011801_x64_modern
+ENV BOOK /book.bin
 #ENV OPTIONS [[\"Hash\", \"1024\"]]
 ENV PORT 3010
 CMD ["node", "stockfish.js"]

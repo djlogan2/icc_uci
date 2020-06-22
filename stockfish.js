@@ -1,16 +1,15 @@
 const Engine = require("node-uci").Engine;
 const express = require("express");
 const {Chess} = require('chess.js');
-
+const PolyglotBook = require("./polygotbook");
 const app = express();
+
+let book;
 
 const os = require('os')
 const cpuCount = os.cpus().length
 
-const movetime = Math.ceil(30 * 1000 / cpuCount);
-
 console.log("Found " + cpuCount + " CPUs");
-console.log("Setting movetime to " + movetime);
 
 const game = new Chess();
 const engine = new Engine(process.env.ENGINE);
@@ -18,114 +17,161 @@ let status = "none";
 let game_result;
 let error_to_return;
 
-const initialized = engine
-    .init()
-    .then(setup_engine())
-    .catch((error) => {
-        console.log(error.toString());
-        error_to_return = error;
-    })
+async function setup_book() {
+    if (process.env.BOOK) {
+        console.log("Setting up book");
+        book = new PolyglotBook(process.env.BOOK);
+        await book.initialize();
+    }
+}
 
-function setup_engine() {
-    const options = !!process.env.options ? JSON.parse(process.env.OPTIONS) : [];
+async function setup_engine(options) {
+    options = options || !!process.env.options ? JSON.parse(process.env.OPTIONS) : [];
 
     const thr = options.findIndex(opt => opt[0] === "Threads");
-    if(thr !== -1)
-        options[thr][1] = cpuCount;
-    else
+    if (thr === -1)
         options.unshift(["Threads", cpuCount]);
 
     const mpv = options.findIndex(opt => opt[0] === "MultiPV");
-    if(mpv !== -1)
-        options[mpv][1] = "4";
-    else
+    if (mpv === -1)
         options.unshift(["MultiPV", "4"]);
 
-    if (!options || !options.length)
-        return Promise.resolve();
+    console.log("Setting up engine");
+    console.log(options);
 
-    const do_options = options.reduce((promiseChain, currentTask) => {
-        return promiseChain.then(() => {
-            console.log("setoption " + currentTask[0] + " " + currentTask[1]);
-            return engine.setoption(currentTask[0], currentTask[1]);
-        });
-    }, Promise.resolve());
-    return do_options.then(() => {
-        console.log("Engine initialized");
-        status = "initialized"
-        return Promise.resolve();
-    });
+    await engine.init();
+    for (let x = 0; x < options.length; x++)
+        await engine.setoption(options[x][0], options[x][1]);
+    status = "initialized";
 }
 
-function process_one_move(move) {
+async function process_one_move(options, move, fen) {
     console.log("Analyzing " + move);
-    const fen = game.fen();
-    return engine.position(fen)
-        .then(() => engine.go({movetime: movetime}))
-        .then((result) => {
-            const multis = [];
-            result.info.forEach(currentMove => {
-                const mpv = parseInt(currentMove.multipv);
-                while(multis.length < mpv) multis.push({pv: "", score: 0, depth: 0, time: 0, nps: 0, multipv: mpv, nodes: 0});
-                multis[mpv - 1] = {
-                    pv: currentMove.pv,
-                    score: !!currentMove.score ? parseInt(currentMove.score.value) : "?",
-                    depth: parseInt(currentMove.depth),
-                    time: parseInt(currentMove.time),
-                    nps: parseInt(currentMove.nps),
-                    multipv: mpv,
-                    nodes: parseInt(currentMove.nodes)
-                };
-            });
+
+    if (!fen)
+        fen = game.fen();
+    else
+        game.load(fen);
+
+    if (book) {
+        const entries = await book.getBookMoves(fen);
+        if(!!entries && entries.length) {
+            console.log("Returning book moves");
 
             const themove = game.move(move);
             const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
 
-            game_result.push({
-                move: move,
-                alg: alg,
-                lines: multis
-            });
+            if (!game_result)
+                game_result = {
+                    move: move,
+                    alg: alg,
+                    lines: entries.map(e => {return {pv: e.smith, score: {unit: "book", value: 1}, depth: 0, time: 0, nps: 0, multipv: 0, nodes: 0}})
+                }
+            else {
+                game_result.push({
+                    move: move,
+                    alg: alg,
+                    lines: entries.map(e => {return {pv: e.smith, score: {unit: "book", value: 1}, depth: 0, time: 0, nps: 0, multipv: 0, nodes: 0}})
+                });
+            }
+            return;
+        }
+    }
+
+    await engine.position(fen);
+    const result = await engine.go(options);
+
+    const multis = [];
+    result.info.forEach(currentMove => {
+        const mpv = parseInt(currentMove.multipv);
+        while (multis.length < mpv) multis.push({
+            pv: "",
+            score: {unit: "cp", value: 0},
+            depth: 0,
+            time: 0,
+            nps: 0,
+            multipv: mpv,
+            nodes: 0
+        });
+        multis[mpv - 1] = {
+            pv: currentMove.pv,
+            score: currentMove.score,
+            depth: parseInt(currentMove.depth),
+            time: parseInt(currentMove.time),
+            nps: parseInt(currentMove.nps),
+            multipv: mpv,
+            nodes: parseInt(currentMove.nodes)
+        };
+    });
+
+    const themove = game.move(move);
+    const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
+
+    if (!game_result)
+        game_result = {
+            move: move,
+            alg: alg,
+            lines: multis
+        }
+    else
+        game_result.push({
+            move: move,
+            alg: alg,
+            lines: multis
         });
 }
 
-function process_game(game) {
+
+async function process_game(options, move_array) {
     status = "running";
     game_result = [];
-    const chain = game.reduce((promiseChain, move) => promiseChain.then(() => process_one_move(move)), Promise.resolve());
-    return chain.then(() => {
-        console.log("Game complete");
+    for (let x = 0; x < move_array.length; x++)
+        await process_one_move(options, move_array[x]);
+    console.log("Game complete");
+    status = "waiting";
+}
+
+async function process_request(request) {
+    if (Array.isArray(request)) {
+        return await process_game({movetime: Math.ceil(50 * 1000 / cpuCount)}, request);
+    } else {
+        return await process_one_move(request.options, request.move, request.fen);
+    }
+}
+
+async function do_request(request, callback) {
+    game.reset();
+    if (status === "none") {
+        await setup_book();
+        await setup_engine(Array.isArray(request) ? null : request.options);
         status = "waiting";
-        return Promise.resolve();
-    });
+    } else {
+        await engine.ucinewgame();
+        await engine.isready();
+    }
+
+    await process_request(request);
+    callback();
 }
 
 app.post('/', (req, res) => {
     post_data = "";
+
     req.on('data', function (chunk) {
         post_data += chunk;
     });
+
     req.on('end', function () {
-        game.reset();
-        let thepromise;
-        if(status === "none") {
-            thepromise = initialized;
-        } else {
-            thepromise = engine.isready()
-                .then(() => engine.ucinewgame())
-                .then(() => engine.isready());
-        }
-        thepromise
-            .then(() => process_game(JSON.parse(post_data)))
-            .then(() => {
+        try {
+            do_request(JSON.parse(post_data), () => {
                 res.send(JSON.stringify(game_result));
                 game_result = [];
                 res.end();
-            })
-            .catch((error) => {
-                console.log("ERROR: " + error.toString());
-                res.status(500).send({error: true, message: error.toString()}).end();
             });
+        } catch (error) {
+            console.log("ERROR: " + error.toString());
+            res.status(500).send({error: true, message: error.toString()}).end();
+        }
     });
 });
 
