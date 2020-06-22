@@ -46,7 +46,7 @@ async function setup_engine(options) {
 }
 
 async function process_one_move(options, move, fen) {
-    console.log("Analyzing " + move);
+    console.log("Analyzing " + (!!move ? move : "end of game"));
 
     if (!fen)
         fen = game.fen();
@@ -58,7 +58,7 @@ async function process_one_move(options, move, fen) {
         if(!!entries && entries.length) {
             console.log("Returning book moves");
 
-            const themove = game.move(move);
+            const themove = !!move ? game.move(move) : null;
             const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
 
             if (!game_result)
@@ -104,7 +104,7 @@ async function process_one_move(options, move, fen) {
         };
     });
 
-    const themove = game.move(move);
+    const themove = !!move ? game.move(move) : null;
     const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
 
     if (!game_result)
@@ -127,6 +127,7 @@ async function process_game(options, move_array) {
     game_result = [];
     for (let x = 0; x < move_array.length; x++)
         await process_one_move(options, move_array[x]);
+    await process_one_move(options);
     console.log("Game complete");
     status = "waiting";
 }
@@ -134,6 +135,12 @@ async function process_game(options, move_array) {
 async function process_request(request) {
     if (Array.isArray(request)) {
         return await process_game({movetime: Math.ceil(50 * 1000 / cpuCount)}, request);
+    } else if(!!request.game) {
+        if(!!request.go_options && !!request.go_options.totaltime) {
+            request.go_options.movetime = request.go_options.totaltime / cpuCount;
+            delete request.go_options.totaltime;
+        }
+        return await process_game(request.go_options || {movetime: Math.ceil(50 * 1000 / cpuCount)}, request.game);
     } else {
         return await process_one_move(request.options, request.move, request.fen);
     }
