@@ -6,7 +6,7 @@ RUN apt-get install --yes curl
 RUN curl -sL https://deb.nodesource.com/setup_14.x | bash -
 RUN apt-get install --yes nodejs
 RUN apt-get install --yes build-essential
-COPY stockfish.js .
+COPY *.js ./
 COPY package.json .
 COPY docker/stockfish_20011801_x64_modern .
 COPY docker/book.bin .
