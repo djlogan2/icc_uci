@@ -72,23 +72,39 @@ async function tablebase(game) {
                 if(tbr.checkmate) {
                     lines = [{
                         pv: "?",
-                        score: {unit: "mate", value: -32768},
+                        score: {unit: "mate", value: 0},
                         depth: 0,
                         time: 0,
                         nps: 0,
                         multipv: 0,
-                        nodes: 0
+                        nodes: 0,
+                        tablebase: "checkmate"
                     }];
                 } else if(tbr.stalemate || tbr.insufficient_material) {
-                    lines = [{
-                        pv: "?",
-                        score: {unit: "cp", value: 0},
-                        depth: 0,
-                        time: 0,
-                        nps: 0,
-                        multipv: 0,
-                        nodes: 0
-                    }];
+                    if(!!tbr.moves)
+                        lines = tbr.moves.map(e => {
+                            return {
+                                pv: e.uci,
+                                score: {unit: "cp", value: 0},
+                                depth: 0,
+                                time: 0,
+                                nps: 0,
+                                multipv: 0,
+                                nodes: 0,
+                                tablebase: "stalemate1"
+                            }
+                        })
+                    if(!lines)
+                        lines = [{
+                            pv: "?",
+                            score: {unit: "cp", value: 0},
+                            depth: 0,
+                            time: 0,
+                            nps: 0,
+                            multipv: 0,
+                            nodes: 0,
+                            tablebase: "stalemate2"
+                        }];
                 } else if(tbr.dtm != null) {
                     lines = tbr.moves.map(e => {
                         return {
@@ -98,7 +114,8 @@ async function tablebase(game) {
                             time: 0,
                             nps: 0,
                             multipv: 0,
-                            nodes: 0
+                            nodes: 0,
+                            tablebase: "dtm"
                         }
                     })
                 } else {
@@ -110,7 +127,8 @@ async function tablebase(game) {
                             time: 0,
                             nps: 0,
                             multipv: 0,
-                            nodes: 0
+                            nodes: 0,
+                            tablebase: "draw"
                         }
                     })
                 }
@@ -131,10 +149,12 @@ async function process_one_move(options, move, fen) {
     else
         game.load(fen);
 
+
+    const tablebase_moves = await tablebase(game);
+
     const themove = !!move ? game.move(move) : null;
     const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
 
-    const tablebase_moves = await tablebase(game);
     if(tablebase_moves) {
         if(!game_result)
             game_result = [];
