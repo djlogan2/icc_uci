@@ -259,6 +259,8 @@ async function process_request(request) {
     if (Array.isArray(request)) {
         return await process_game({movetime: Math.ceil(50 * 1000 / cpuCount)}, request);
     } else if (!!request.game) {
+        if(!!request.multipv)
+            await engine.setoption("MultiPV", request.multipv);
         if (!!request.go_options && !!request.go_options.totaltime) {
             request.go_options.movetime = request.go_options.totaltime / cpuCount;
             delete request.go_options.totaltime;
