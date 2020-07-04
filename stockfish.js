@@ -1,8 +1,10 @@
 const Engine = require("node-uci").Engine;
 const express = require("express");
+const soap = require('soap');
 const {Chess} = require('chess.js');
 const PolyglotBook = require("./polygotbook");
 const app = express();
+const http = require('http');
 
 let book;
 
@@ -45,6 +47,82 @@ async function setup_engine(options) {
     status = "initialized";
 }
 
+async function tablebase(game) {
+
+    return new Promise((resolve, reject) => {
+        const board = game.board();
+        let piececount = 0;
+        for(let x = 0 ; x < 8 ; x++) {
+            for(let y = 0 ; y < 8 ; y++) {
+                if(!!board[x][y]) piececount++;
+                if(piececount > 6) {
+                    resolve();
+                    return;
+                }
+            }
+        }
+    //http://tablebase.lichess.ovh/standard?fen=4k3/6KP/8/8/8/8/7p/8_w_-_-_0_1
+        http.get("http://tablebase.lichess.ovh/standard?fen=" + game.fen().replace(/ /g,"_"), res => {
+            let tb_response = "";
+            res.setEncoding("utf-8");
+            res.on("data", (data) => tb_response += data);
+            res.on("end", () => {
+                const tbr = JSON.parse(tb_response);
+                let lines;
+                if(tbr.checkmate) {
+                    lines = [{
+                        pv: "?",
+                        score: {unit: "mate", value: -32768},
+                        depth: 0,
+                        time: 0,
+                        nps: 0,
+                        multipv: 0,
+                        nodes: 0
+                    }];
+                } else if(tbr.stalemate || tbr.insufficient_material) {
+                    lines = [{
+                        pv: "?",
+                        score: {unit: "cp", value: 0},
+                        depth: 0,
+                        time: 0,
+                        nps: 0,
+                        multipv: 0,
+                        nodes: 0
+                    }];
+                } else if(tbr.dtm != null) {
+                    lines = tbr.moves.map(e => {
+                        return {
+                            pv: e.uci,
+                            score: {unit: "mate", value: e.dtm},
+                            depth: Math.abs(e.dtm),
+                            time: 0,
+                            nps: 0,
+                            multipv: 0,
+                            nodes: 0
+                        }
+                    })
+                } else {
+                    lines = tbr.moves.map(e => {
+                        return {
+                            pv: e.uci,
+                            score: {unit: "cp", value: 0},
+                            depth: 0,
+                            time: 0,
+                            nps: 0,
+                            multipv: 0,
+                            nodes: 0
+                        }
+                    })
+                }
+                // ... create the pgn file and the xml file
+                resolve(lines);
+            });
+        }).on('error', (err) => {
+            reject(err);
+        });
+    });
+}
+
 async function process_one_move(options, move, fen) {
     console.log("Analyzing " + (!!move ? move : "end of game"));
 
@@ -53,25 +131,53 @@ async function process_one_move(options, move, fen) {
     else
         game.load(fen);
 
+    const themove = !!move ? game.move(move) : null;
+    const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
+
+    const tablebase_moves = await tablebase(game);
+    if(tablebase_moves) {
+        if(!game_result)
+            game_result = [];
+        game_result.push({move: move, alg: alg, lines: tablebase_moves});
+        return;
+    }
+
     if (book) {
         const entries = await book.getBookMoves(fen);
-        if(!!entries && entries.length) {
+        if (!!entries && entries.length) {
             console.log("Returning book moves");
-
-            const themove = !!move ? game.move(move) : null;
-            const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
 
             if (!game_result)
                 game_result = {
                     move: move,
                     alg: alg,
-                    lines: entries.map(e => {return {pv: e.smith, score: {unit: "book", value: 1}, depth: 0, time: 0, nps: 0, multipv: 0, nodes: 0}})
+                    lines: entries.map(e => {
+                        return {
+                            pv: e.smith,
+                            score: {unit: "book", value: 1},
+                            depth: 0,
+                            time: 0,
+                            nps: 0,
+                            multipv: 0,
+                            nodes: 0
+                        }
+                    })
                 }
             else {
                 game_result.push({
                     move: move,
                     alg: alg,
-                    lines: entries.map(e => {return {pv: e.smith, score: {unit: "book", value: 1}, depth: 0, time: 0, nps: 0, multipv: 0, nodes: 0}})
+                    lines: entries.map(e => {
+                        return {
+                            pv: e.smith,
+                            score: {unit: "book", value: 1},
+                            depth: 0,
+                            time: 0,
+                            nps: 0,
+                            multipv: 0,
+                            nodes: 0
+                        }
+                    })
                 });
             }
             return;
@@ -104,9 +210,6 @@ async function process_one_move(options, move, fen) {
         };
     });
 
-    const themove = !!move ? game.move(move) : null;
-    const alg = !themove ? "?" : themove.from + themove.to + (!!themove.promotion ? themove.promotion : "");
-
     if (!game_result)
         game_result = {
             move: move,
@@ -135,8 +238,8 @@ async function process_game(options, move_array) {
 async function process_request(request) {
     if (Array.isArray(request)) {
         return await process_game({movetime: Math.ceil(50 * 1000 / cpuCount)}, request);
-    } else if(!!request.game) {
-        if(!!request.go_options && !!request.go_options.totaltime) {
+    } else if (!!request.game) {
+        if (!!request.go_options && !!request.go_options.totaltime) {
             request.go_options.movetime = request.go_options.totaltime / cpuCount;
             delete request.go_options.totaltime;
         }

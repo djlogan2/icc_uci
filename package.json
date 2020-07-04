@@ -12,6 +12,7 @@
   "dependencies": {
     "chess.js": "^0.10.3",
     "express": "^4.17.1",
-    "node-uci": "^1.3.4"
+    "node-uci": "^1.3.4",
+    "soap": "^0.31.0"
   }
 }
