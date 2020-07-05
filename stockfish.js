@@ -67,7 +67,13 @@ async function tablebase(game) {
             res.setEncoding("utf-8");
             res.on("data", (data) => tb_response += data);
             res.on("end", () => {
-                const tbr = JSON.parse(tb_response);
+                let tbr;
+                try {
+                    tbr = JSON.parse(tb_response);
+                } catch(e) {
+                    resolve();
+                    return;
+                }
                 let lines;
                 if(tbr.checkmate) {
                     lines = [{
